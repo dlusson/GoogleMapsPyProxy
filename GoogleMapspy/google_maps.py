@@ -3,6 +3,7 @@ import logging
 import re
 from time import sleep
 import requests
+import os
 from GoogleMapspy.function import get_1d, country_suffix_dict
 from GoogleMapspy.var import Place, Review, get_index
 from urllib.parse import quote_plus
@@ -19,7 +20,7 @@ ENV_PROXY_HTTPS = "GOOGLEMAPSPY_PROXY_HTTPS_URL"
 class GoogleMaps:
 
     def __init__(self, latitude: str = "-200", longitude: str = "-200", lang: str = "en", country_code: str = "eg",
-                 zoom: float = None, zoom_index: int = 9, session: requests.Session = None):
+                 zoom: float = None, zoom_index: int = 9, session: requests.Session = None, proxies: dict = None):
 
         logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', datefmt='%d-%b-%y %H:%M:%S')
         self.logger = logging.getLogger(name="GoogleMapsPy")
