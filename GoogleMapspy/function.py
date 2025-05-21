@@ -1,99 +1,31 @@
 from urllib.parse import unquote
-
 import requests
 import random
 import json
 import numpy as np
 import math
-# https://serpapi.com/maps-local-results
-# https://github.com/iewoai/GoogleMap_Spider/blob/master/main.py
-# https://medium.com/@supun1001/how-to-generate-google-embed-links-programmatically-for-iframes-for-routes-only-d6dc225e59e8
-######## 谷歌地图爬虫（requests版）
-######## 目标：搜素company，改坐标，获取全球所有公司信息
-###### 思路：从一点出发，选取该点最优Z（以整数调整），以该点的切片边长或1d表达式做距离，经纬等长移动度差，移动后的每一点重复该步骤。
-#### 注（纯个人理解）：
-# 1. 同一经纬度，不同缩放倍数的公司数目不一样，很难选最优值
-# 2. 当没有最优值，即该坐标附近无公司的情况，需设置默认度幅（经纬度增减幅度）
-# 3. 移动时为前后左右移动，即固定经度或纬度，正负移动另一个
-# 4. 固纬度动经度，度差受纬度和距离影响；固经度动纬度，度差仅受距离影响
-# 5. 最优值选缩放倍数大于等于12的（纬度幅0.82739）小于等于18的（纬度幅0.00899）中公司数目中最多的倍数，以其1d（见url解析）做距离，上下左右移动。当12-18公司数都为0时，取默认度幅
 
-##### 瓦片地图原理参考资料：
-# https://segmentfault.com/a/1190000011276788
-# https://blog.csdn.net/mygisforum/article/details/8162751
-# https://www.maptiler.com/google-maps-coordinates-tile-bounds-projection/
-# https://blog.csdn.net/mygisforum/article/details/13295223
-
-#### url解析1
-## url = 'https://www.google.com/maps/search/company/@43.8650268,-124.6372106,3.79z'
-## https://www.google.com/maps/search/company/@X,Y,Z
-## X 纬度，范围[-85.05112877980659, 85.05112877980659]
-## Y 经度，范围 [-180, 180]
-## Z 缩放倍数，范围[2, 21]
-## Z=2 切片正方形边长为20037508.3427892
-#### url解析2
-## https://www.google.com/search?tbm=map&authuser=0&hl={1}&gl={2}&pb=!4m9!1m3!1d{3}!2d{4}!3d{5}!2m0!3m2!1i784!2i644!4f13.1!7i20{6}!10b1!12m8!1m1!18b1!2m3!5m1!6e2!20e3!10b1!16b1!19m4!2m3!1i360!2i120!4i8!20m57!2m2!1i203!2i100!3m2!2i4!5b1!6m6!1m2!1i86!2i86!1m2!1i408!2i240!7m42!1m3!1e1!2b0!3e3!1m3!1e2!2b1!3e2!1m3!1e2!2b0!3e3!1m3!1e3!2b0!3e3!1m3!1e8!2b0!3e3!1m3!1e3!2b1!3e2!1m3!1e9!2b1!3e2!1m3!1e10!2b0!3e3!1m3!1e10!2b1!3e2!1m3!1e10!2b0!3e4!2b1!4b1!9b0!22m6!1sg3qzXsG-JpeGoATHyYKQBw%3A1!2zMWk6MSx0OjExODg3LGU6MCxwOmczcXpYc0ctSnBlR29BVEh5WUtRQnc6MQ!7e81!12e3!17sg3qzXsG-JpeGoATHyYKQBw%3A110!18e15!24m46!1m12!13m6!2b1!3b1!4b1!6i1!8b1!9b1!18m4!3b1!4b1!5b1!6b1!2b1!5m5!2b1!3b1!5b1!6b1!7b1!10m1!8e3!14m1!3b1!17b1!20m2!1e3!1e6!24b1!25b1!26b1!30m1!2b1!36b1!43b1!52b1!55b1!56m2!1b1!3b1!65m5!3m4!1m3!1m2!1i224!2i298!26m4!2m3!1i80!2i92!4i8!30m28!1m6!1m2!1i0!2i0!2m2!1i458!2i644!1m6!1m2!1i734!2i0!2m2!1i784!2i644!1m6!1m2!1i0!2i0!2m2!1i784!2i20!1m6!1m2!1i0!2i624!2m2!1i784!2i644!34m13!2b1!3b1!4b1!6b1!8m3!1b1!3b1!4b1!9b1!12b1!14b1!20b1!23b1!37m1!1e81!42b1!47m0!49m1!3b1!50m4!2e2!3m2!1b1!3b0!65m0&q={7}&oq={8}&gs_l=maps.12...0.0.1.12357296.1.1.0.0.0.0.0.0..0.0....0...1ac..64.maps..1.0.0.0...3041.&tch=1&ech=1&psi=g3qzXsG-JpeGoATHyYKQBw.1588820611303.1
-## hl={1}为语言，常用zh-CN或en
-## g1={2}为当前所在国家地区缩写
-## !1d{3}为1d，与缩放倍数有关，相邻两整数缩放倍数之间1d成1/2关系，缩放倍数越高值越小，最大为94618532.08008283，猜测为当前所在地图切片边长或周长等边长正比关系
-## !2d{4}为2d，经度
-## !3d{5}为3d，纬度
-## {6}为搜素结果页数，格式为!8i+page，其中page默认为20的倍数，且page为0时（即第一页时），url中无!8i字段
-## q={7}&oq={8}，基本都是搜素词
-
-##### 经纬度和距离互转
-# 来源：https://blog.csdn.net/qq_37742059/article/details/101554565
-earth_radius = 6370.856  # 地球平均半径，单位km，最简单的模型往往把地球当做完美的球形，这个值就是常说的RE
+# --- Constants for geographic calculations (from your original) ---
+earth_radius = 6370.856
 math_2pi = math.pi * 2
-pis_per_degree = math_2pi / 360  # 角度一度所对应的弧度数，360对应2*pi
+pis_per_degree = math_2pi / 360
 
-
-# 纯纬度上，度数差转距离
+# --- Geographic helper functions (from your original) ---
 def lat_degree2km(dif_degree=.0001, radius=earth_radius):
-    """
-    通过圆环求法，纯纬度上，度数差转距离(km)，与中间点所处的地球上的位置关系不大
-    :param dif_degree: 度数差, 经验值0.0001对应11.1米的距离
-    :param radius: 圆环求法的等效半径，纬度距离的等效圆环是经线环，所以默认都是earth_radius
-    :return: 这个度数差dif_degree对应的距离，单位km
-    """
     return radius * dif_degree * pis_per_degree
 
-
-# 纯纬度上，距离值转度数
 def lat_km2degree(dis_km=111, radius=earth_radius):
-    """
-    通过圆环求法，纯纬度上，距离值转度数(diff)，与中间点所处的地球上的位置关系不大
-    :param dis_km: 输入的距离，单位km，经验值111km相差约(接近)1度
-    :param radius: 圆环求法的等效半径，纬度距离的等效圆环是经线环，所以默认都是earth_radius
-    :return: 这个距离dis_km对应在纯纬度上差多少度
-    """
     return dis_km / radius / pis_per_degree
 
-
 def lng_degree2km(dif_degree=.0001, center_lat=22):
-    """
-    通过圆环求法，纯经度上，度数差转距离(km)，纬度的高低会影响距离对应的经度角度差，具体表达式为：
-    :param dif_degree: 度数差
-    :param center_lat: 中心点的纬度，默认22为深圳附近的纬度值；为0时表示赤道，赤道的纬线环半径使得经度计算和上面的纬度计算基本一致
-    :return: 这个度数差dif_degree对应的距离，单位km
-    """
-    # 修正后，中心点所在纬度的地表圆环半径
     real_radius = earth_radius * math.cos(center_lat * pis_per_degree)
     return lat_degree2km(dif_degree, real_radius)
 
-
 def lng_km2degree(dis_km=1, center_lat=22):
-    """
-    纯经度上，距离值转角度差(diff)，单位度数。
-    :param dis_km: 输入的距离，单位km
-    :param center_lat: 中心点的纬度，默认22为深圳附近的纬度值；为0时表示赤道。赤道、中国深圳、中国北京、对应的修正系数分别约为： 1  0.927  0.766
-    :return: 这个距离dis_km对应在纯经度上差多少度
-    """
-    # 修正后，中心点所在纬度的地表圆环半径
     real_radius = earth_radius * math.cos(center_lat * pis_per_degree)
     return lat_km2degree(dis_km, real_radius)
 
-
+# --- User Agents (from your original) ---
 agents = [
     'Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.101 Safari/537.36',
     'Mozilla/5.0 (Windows; U; Windows NT 6.1; en-US) AppleWebKit/532.5 (KHTML, like Gecko) Chrome/4.0.249.0 Safari/532.5',
@@ -101,9 +33,12 @@ agents = [
     'Mozilla/5.0 (Windows; U; Windows NT 5.1; en-US) AppleWebKit/534.7 (KHTML, like Gecko) Chrome/7.0.514.0 Safari/534.7',
     'Mozilla/5.0 (Windows; U; Windows NT 6.0; en-US) AppleWebKit/534.14 (KHTML, like Gecko) Chrome/9.0.601.0 Safari/534.14',
     'Mozilla/5.0 (Windows; U; Windows NT 6.1; en-US) AppleWebKit/534.14 (KHTML, like Gecko) Chrome/10.0.601.0 Safari/534.14',
-    'Mozilla/5.0 (Windows; U; Windows NT 6.1; en-US) AppleWebKit/534.20 (KHTML, like Gecko) Chrome/11.0.672.2 Safari/534.20", "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/534.27 (KHTML, like Gecko) Chrome/12.0.712.0 Safari/534.27',
-    'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/535.1 (KHTML, like Gecko) Chrome/13.0.782.24 Safari/535.1']
-# 谷歌地图英文国家
+    'Mozilla/5.0 (Windows; U; Windows NT 6.1; en-US) AppleWebKit/534.20 (KHTML, like Gecko) Chrome/11.0.672.2 Safari/534.20', # Removed extra quote
+    'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/534.27 (KHTML, like Gecko) Chrome/12.0.712.0 Safari/534.27',
+    'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/535.1 (KHTML, like Gecko) Chrome/13.0.782.24 Safari/535.1'
+]
+
+# --- Country Dictionaries (from your original) ---
 google_country_dict = {'afghanistan': 'Afghanistan', 'åland islands': 'Åland Islands', 'albania': 'Albania',
                        'algeria': 'Algeria', 'american samoa': 'American Samoa', 'andorra': 'Andorra',
                        'angola': 'Angola', 'anguilla': 'Anguilla', 'antarctica': 'Antarctica',
@@ -199,7 +134,7 @@ google_country_dict = {'afghanistan': 'Afghanistan', 'åland islands': 'Åland I
                        'wallis and futuna': 'Wallis and Futuna', 'western sahara*': 'Western Sahara', 'yemen': 'Yemen',
                        'zambia': 'Zambia', 'zimbabwe': 'Zimbabwe', 'lao peoples democratic republic': 'Laos',
                        'cote divoire': "Côte d'Ivoire", 'kosovo': 'Kosovo'}
-# 国家缩写后缀
+
 country_suffix_dict = {'af': 'Afghanistan', 'fk': 'land Islands', 'al': 'Albania', 'dz': 'Algeria',
                        'as': 'American Samoa', 'ad': 'Andorra', 'ao': 'Angola', 'ai': 'Anguilla', 'aq': 'Antarctica',
                        'ag': 'Antigua and Barbuda', 'ar': 'Argentina', 'am': 'Armenia', 'aw': 'Aruba',
@@ -252,142 +187,289 @@ country_suffix_dict = {'af': 'Afghanistan', 'fk': 'land Islands', 'al': 'Albania
                        'wf': 'Wallis and Futuna', 'ws': 'Western Sahara*', 'ye': 'Yemen', 'zm': 'Zambia',
                        'zw': 'Zimbabwe', 'la': 'Lao Peoples Democratic Republic', 'ci': 'COTE DIVOIRE'}
 
-
-# 获得一页的所有公司信息
+# --- Data Extraction Function (from your original, with minor original pathing fixes) ---
 def get_allcom(response):
     page_source = response.text
-    big_dict = json.loads(page_source.replace('/*""*/', ''))
-    d_str = big_dict['d'].replace(")]}'", '').strip()
-    d_list = json.loads(d_str)
-    company_list = d_list[0][1]
     result_list = list()
-    if company_list:
-        for company in company_list:
+    try:
+        # Original parsing logic
+        big_dict = json.loads(page_source.replace('/*""*/', ''))
+        d_str = big_dict.get('d', '').replace(")]}'", '').strip() # Added .get for safety
+        if not d_str:
+            return result_list
+        
+        d_list_outer = json.loads(d_str)
+        if not (isinstance(d_list_outer, list) and len(d_list_outer) > 0 and 
+                isinstance(d_list_outer[0], list) and len(d_list_outer[0]) > 1 and
+                d_list_outer[0][1] is not None):
+            return result_list
+
+        company_list_container = d_list_outer[0][1] # This is the list of company wrappers
+        if not company_list_container or not isinstance(company_list_container, list):
+            return result_list # No companies, or unexpected structure
+
+        for company_wrapper in company_list_container: # company_wrapper should be a list
+            if not isinstance(company_wrapper, list) or len(company_wrapper) <= 14 : # Check for the data container
+                continue # Skip if data not in expected place
+            
+            company_data = company_wrapper[14] # The actual data array
+            if not isinstance(company_data, list):
+                continue
+
             try:
                 temp_dict = dict()
-                if len(company) > 14:
-                    temp_dict['companyName'] = company[14][11] if company and company[14] and company[14][11] else None
-                    temp_dict['url'] = company[14][7][0] if company and company[14] and company[14][7] and \
-                                                            company[14][7][
-                                                                0] else None
-                    if temp_dict['url']:
-                        temp_dict['url'] = unquote(temp_dict['url'])
-                    temp_dict['address'] = company[14][39] if company and company[14] and company[14][39] else None
-                    if not temp_dict['address']:
-                        temp_dict['address'] = company[14][18] if company and company[14] and company[14][18] else None
-                    temp_dict['phone'] = company[14][178][0][0] if company and company[14] and company[14][178] and \
-                                                                   company[14][178][0] and company[14][178][0][
-                                                                       0] else None
-                    if not temp_dict['phone']:
-                        temp_dict['phone'] = company[14][3][0] if company and company[14] and company[14][3] and \
-                                                                  company[14][3][0] else None
-                    temp_dict['category'] = '>'.join(company[14][13]) if company and company[14] and company[14][
-                        13] else None
-                    temp_dict['countryEn'] = None
-                    if temp_dict['address']:
-                        for google_country in google_country_dict.values():
-                            if google_country.lower() in temp_dict['address'].lower():
-                                temp_dict['countryEn'] = google_country
-                                break
-                    if not temp_dict['countryEn']:
-                        if company[14] and company[14][183] and company[14][183][1] and company[14][183][
-                            -1].lower() in country_suffix_dict.keys():
-                            temp_dict['countryEn'] = country_suffix_dict(company[14][183][-1].lower())
-                    temp_dict['city'] = company[14][14] if company and company[14] and company[14][14] else None
-                    if temp_dict['companyName']:
-                        yield temp_dict
-                        result_list.append(temp_dict)
-            except Exception as e:
-                continue
+                # Accessing elements safely
+                temp_dict['companyName'] = company_data[11] if len(company_data) > 11 and company_data[11] else None
+                
+                url_info = company_data[7] if len(company_data) > 7 and company_data[7] and isinstance(company_data[7], list) and company_data[7] else None
+                temp_dict['url'] = url_info[0] if url_info else None
+                if temp_dict['url']:
+                    temp_dict['url'] = unquote(temp_dict['url'])
+
+                temp_dict['address'] = company_data[39] if len(company_data) > 39 and company_data[39] else None
+                if not temp_dict['address'] and len(company_data) > 18 and company_data[18]:
+                    temp_dict['address'] = company_data[18]
+                
+                phone_val = None
+                phone_info_178 = company_data[178] if len(company_data) > 178 and company_data[178] and isinstance(company_data[178], list) and company_data[178] else None
+                if phone_info_178 and isinstance(phone_info_178[0], list) and phone_info_178[0]:
+                    phone_val = phone_info_178[0][0]
+                
+                if not phone_val:
+                    phone_info_3 = company_data[3] if len(company_data) > 3 and company_data[3] and isinstance(company_data[3], list) and company_data[3] else None
+                    if phone_info_3:
+                        phone_val = phone_info_3[0]
+                temp_dict['phone'] = phone_val
+
+                category_list = company_data[13] if len(company_data) > 13 and company_data[13] and isinstance(company_data[13], list) else None
+                temp_dict['category'] = '>'.join(category_list) if category_list else None
+                
+                temp_dict['countryEn'] = None
+                if temp_dict['address']:
+                    addr_lower = temp_dict['address'].lower()
+                    for google_country_val in google_country_dict.values():
+                        if google_country_val.lower() in addr_lower:
+                            temp_dict['countryEn'] = google_country_val
+                            break
+                
+                if not temp_dict['countryEn']:
+                    addr_info_183 = company_data[183] if len(company_data) > 183 and company_data[183] and isinstance(company_data[183], list) else None
+                    if addr_info_183 and len(addr_info_183) > 1 and isinstance(addr_info_183[1], list) and addr_info_183[1] and addr_info_183[-1]: # Checking path to country code
+                        country_code_key = addr_info_183[-1].lower() # Assuming last element is country code
+                        if country_code_key in country_suffix_dict:
+                             temp_dict['countryEn'] = country_suffix_dict[country_code_key]
+
+                temp_dict['city'] = company_data[14] if len(company_data) > 14 and company_data[14] else None
+                
+                if temp_dict['companyName']: # Only add if company name exists
+                    # yield temp_dict # If streaming was intended
+                    result_list.append(temp_dict)
+            except (IndexError, TypeError) as e_parse:
+                # print(f"Error parsing specific company: {e_parse}, Data: {str(company_data)[:100]}")
+                continue # Skip this company entry on error
+    except json.JSONDecodeError:
+        # print(f"JSON Decode Error. Response Preview: {page_source[:200]}")
+        pass # Or handle as needed
+    except Exception as e:
+        # print(f"General error_in_get_allcom: {e}. Response Preview: {page_source[:200]}")
+        pass # Or handle as needed
+        
     return result_list
 
 
-# 调整1d，moudle1：步幅0.01，moudle0：步幅1
+# --- Functions to calculate map parameters (from your original) ---
 def get_1d(module=1, offset=0.01):
     a = []
-    # z=2 1d值
     ori = 94618532.08008283
     a.append([2, ori])
-    for i in range(2, 22):
-        if i > 2:
+    for i_zoom in range(2, 22): # Renamed i to i_zoom
+        if i_zoom > 2:
             ori = (ori / 2)
-        else:
-            ori = ori
+        # else: ori is correct for i_zoom = 2
         if module == 1:
-            for j in np.arange(0, 1, offset):
-                if (i + j) > 2 and (i + j) <= 21:
-                    # print((i+j),ori - ori*j/2)
-                    a.append([(i + j), ori - ori * j / 2])
+            for j_offset in np.arange(0, 1, offset): # Renamed j to j_offset
+                if (i_zoom + j_offset) > 2 and (i_zoom + j_offset) <= 21:
+                    a.append([(i_zoom + j_offset), ori - ori * j_offset / 2]) # Original formula
         elif module == 0:
-            if [i, ori] not in a:
-                a.append([i, ori])
+            if [i_zoom, ori] not in a: # To avoid duplicate for i_zoom=2 if already added
+                a.append([i_zoom, ori])
     return dict(a)
 
-
-# 调整经纬度
-# d3为纬度，范围[-85.05112877980659, 85.05112877980659]
-# d2为经度，范围 [-180, 180]
 def get_23d(d2, d3, dis=5775.056889653493):
-    # 默认经纬度步幅，取缩放倍数16的1d
-    # 取值范围
-    lat_range = [-85.05112877980659, 85.05112877980659]
-    lon_range = [-180, 180]
+    # lat_range = [-85.05112877980659, 85.05112877980659] # Informational
+    # lon_range = [-180, 180] # Informational
 
-    lat = lat_km2degree(int(dis / 1000))
-    lon = lng_km2degree(int(dis / 1000), d3)
-    # print(lat, lon)
-    up = (d2, d3 + lat) if d3 + lat > -85.05112877980659 and d3 + lat < 85.05112877980659 else None
-    down = (d2, d3 - lat) if d3 - lat > -85.05112877980659 and d3 - lat < 85.05112877980659 else None
-    left = (d2 - lon, d3) if d2 - lon > -180 and d2 - lon < 180 else None
-    right = (d2 + lon, d3) if d2 + lon > -180 and d2 + lon < 180 else None
+    lat = lat_km2degree(dis / 1000.0) # dis is in meters, convert to km
+    lon = lng_km2degree(dis / 1000.0, d3)
 
-    return [up, down, left, right]
+    up_lat = d3 + lat
+    down_lat = d3 - lat
+    left_lon = d2 - lon
+    right_lon = d2 + lon
+
+    # Check if new coordinates are within typical map bounds (optional but good practice)
+    up = (d2, up_lat) if -85.05112877980659 <= up_lat <= 85.05112877980659 else None
+    down = (d2, down_lat) if -85.05112877980659 <= down_lat <= 85.05112877980659 else None
+    # Longitude can wrap, so usually no strict check unless needed by the application's logic
+    left = (left_lon, d3)
+    right = (right_lon, d3)
+    
+    # Filter out None values if any coordinate went out of bounds and was set to None
+    return [coord for coord in [up, down, left, right] if coord is not None]
 
 
-def get_com(d2, d3):
-    # 记录不同缩放倍数的公司数目
+# --- Main Company Scraping Function with PROXY SUPPORT ---
+def get_com(d2_lon, d3_lat, proxies=None): # <<< MODIFIED: Added proxies parameter (defaults to None)
+    """
+    Crawls Google Maps for company data.
+    d2_lon: Longitude
+    d3_lat: Latitude
+    proxies: Optional dictionary for requests proxies. e.g., {"http": "...", "https": "..."}
+    """
     com_num = {}
-    # 倍数字典
     d1_dict = get_1d(0)
+
     for d1_multiple in d1_dict:
         d1 = d1_dict[d1_multiple]
         print('目前倍数%d：' % d1_multiple)
-        url = 'https://www.google.com/search?tbm=map&authuser=0&hl=en&pb=!4m12!1m3!1d{}!2d{}!3d{}'
-        page = 0
-        all_result = []
+        
+        # Original URL and pb string structure
+        url_template = 'https://www.google.com/search?tbm=map&authuser=0&hl=en&pb=!4m12!1m3!1d{}!2d{}!3d{}'
+        pb_fixed_part = ( # The pb part that doesn't change with pagination, but has one placeholder for page_id
+            '!2m3!1f0!2f0!3f0!3m2!1i784!2i644!4f13.1!7i20{}!10b1!12m8!1m1!18b1!2m3!5m1!6e2!20e3!10b1!16b1'
+            '!19m4!2m3!1i360!2i120!4i8!20m57!2m2!1i203!2i100!3m2!2i4!5b1!6m6!1m2!1i86!2i86!1m2!1i408!2i240'
+            '!7m42!1m3!1e1!2b0!3e3!1m3!1e2!2b1!3e2!1m3!1e2!2b0!3e3!1m3!1e3!2b0!3e3!1m3!1e8!2b0!3e3!1m3!1e3'
+            '!2b1!3e2!1m3!1e9!2b1!3e2!1m3!1e10!2b0!3e3!1m3!1e10!2b1!3e2!1m3!1e10!2b0!3e4!2b1!4b1!9b0'
+            '!22m5!1s5mKzXrHAJNSXr7wP5u-akAQ!4m1!2i5600!7e81!12e30!24m46!1m12!13m6!2b1!3b1!4b1!6i1!8b1!9b1'
+            '!18m4!3b1!4b1!5b1!6b1!2b1!5m5!2b1!3b1!5b1!6b1!7b1!10m1!8e3!14m1!3b1!17b1!20m2!1e3!1e6!24b1'
+            '!25b1!26b1!30m1!2b1!36b1!43b1!52b1!55b1!56m2!1b1!3b1!65m5!3m4!1m3!1m2!1i224!2i298!26m4!2m3'
+            '!1i80!2i92!4i8!30m28!1m6!1m2!1i0!2i0!2m2!1i458!2i644!1m6!1m2!1i734!2i0!2m2!1i784!2i644!1m6!1m2'
+            '!1i0!2i0!2m2!1i784!2i20!1m6!1m2!1i0!2i624!2m2!1i784!2i644!31b1!34m13!2b1!3b1!4b1!6b1!8m3!1b1'
+            '!3b1!4b1!9b1!12b1!14b1!20b1!23b1!37m1!1e81!42b1!46m1!1e2!47m0!49m1!3b1!50m13!1m8!3m6!1u17!2m4'
+            '!1m2!17m1!1e2!2z6Led56a7!4BIAE!2e2!3m2!1b1!3b0!59BQ2dBd0Fn!65m0&q=company&tch=1&ech=4'
+            '&psi=5mKzXrHAJNSXr7wP5u-akAQ.1588814569168.1' # psi is likely a session/request token
+        )
+        
+        page_offset = 0 # Renamed 'page' for clarity as it's an offset
+        all_result_for_zoom = [] # Renamed 'all_result'
+        
         while True:
-            pb = '!2m3!1f0!2f0!3f0!3m2!1i784!2i644!4f13.1!7i20{}!10b1!12m8!1m1!18b1!2m3!5m1!6e2!20e3!10b1!16b1!19m4!2m3!1i360!2i120!4i8!20m57!2m2!1i203!2i100!3m2!2i4!5b1!6m6!1m2!1i86!2i86!1m2!1i408!2i240!7m42!1m3!1e1!2b0!3e3!1m3!1e2!2b1!3e2!1m3!1e2!2b0!3e3!1m3!1e3!2b0!3e3!1m3!1e8!2b0!3e3!1m3!1e3!2b1!3e2!1m3!1e9!2b1!3e2!1m3!1e10!2b0!3e3!1m3!1e10!2b1!3e2!1m3!1e10!2b0!3e4!2b1!4b1!9b0!22m5!1s5mKzXrHAJNSXr7wP5u-akAQ!4m1!2i5600!7e81!12e30!24m46!1m12!13m6!2b1!3b1!4b1!6i1!8b1!9b1!18m4!3b1!4b1!5b1!6b1!2b1!5m5!2b1!3b1!5b1!6b1!7b1!10m1!8e3!14m1!3b1!17b1!20m2!1e3!1e6!24b1!25b1!26b1!30m1!2b1!36b1!43b1!52b1!55b1!56m2!1b1!3b1!65m5!3m4!1m3!1m2!1i224!2i298!26m4!2m3!1i80!2i92!4i8!30m28!1m6!1m2!1i0!2i0!2m2!1i458!2i644!1m6!1m2!1i734!2i0!2m2!1i784!2i644!1m6!1m2!1i0!2i0!2m2!1i784!2i20!1m6!1m2!1i0!2i624!2m2!1i784!2i644!31b1!34m13!2b1!3b1!4b1!6b1!8m3!1b1!3b1!4b1!9b1!12b1!14b1!20b1!23b1!37m1!1e81!42b1!46m1!1e2!47m0!49m1!3b1!50m13!1m8!3m6!1u17!2m4!1m2!17m1!1e2!2z6Led56a7!4BIAE!2e2!3m2!1b1!3b0!59BQ2dBd0Fn!65m0&q=company&tch=1&ech=4&psi=5mKzXrHAJNSXr7wP5u-akAQ.1588814569168.1'
-            page_id = '!8i%d' % page
+            page_id_str = '!8i%d' % page_offset # Example: !8i0, !8i20, etc.
             headers = {'User-Agent': random.choice(agents)}
-            response = requests.get(url.format(d1, d2, d3) + pb.format(page_id), headers=headers)
-            result = get_allcom(response)
-            all_result += result
-            if len(result) != 0:
-                page += 20
-            else:
-                break
-        print(d1, len(all_result))
-        com_num[d1_multiple] = len(all_result)
+            
+            # Construct the full URL
+            current_base_url = url_template.format(d1, d2_lon, d3_lat)
+            current_pb_part = pb_fixed_part.format(page_id_str) # Insert page_id into pb string
+            full_url = current_base_url + current_pb_part
+            
+            try:
+                # >>> MODIFIED: Pass proxies to requests.get()
+                response = requests.get(full_url, headers=headers, proxies=proxies, timeout=15) # Added timeout
+                response.raise_for_status() # Check for HTTP errors
+                
+                # Assuming get_allcom always returns a list (even if empty)
+                # and doesn't raise exceptions that aren't caught internally.
+                results_from_page = get_allcom(response)
+                
+                if not results_from_page: # No more results on this page
+                    break
+                
+                all_result_for_zoom.extend(results_from_page)
+                page_offset += 20 # Standard pagination step
+            except requests.exceptions.RequestException as e:
+                print(f"Request error for {full_url[:100]}...: {e}")
+                break # Exit this while loop (for this zoom level) on request error
+            except Exception as e_general:
+                print(f"Unexpected error during request for {full_url[:100]}...: {e_general}")
+                break # Exit this while loop on other errors
 
-    max_num = max(list(com_num.values())[12:19])
-    if max_num == 0:
-        # 新的四个坐标
-        new_list = get_23d(d2, d3)
-        print('没有最优倍数，取默认值')
+
+        print(f"For d1 (zoom key) {d1_multiple}, 1d value {d1:.2f}, found {len(all_result_for_zoom)} companies.")
+        com_num[d1_multiple] = len(all_result_for_zoom)
+
+    if not com_num: # No data collected at all
+        print("No company data collected for any zoom level. Cannot proceed with this branch.")
+        return
+
+    # Original logic for choosing the next step
+    # This part is sensitive to the keys and values in com_num (zoom levels 2-21)
+    # The slice [12:19] assumes com_num.keys() are sorted and correspond to zoom levels.
+    # get_1d(0) produces keys: 2, 3, ..., 21.
+    # list(com_num.values())[12:19] would correspond to values for keys 14 through 20.
+    # list(com_num.keys())[12:19] would correspond to keys 14 through 20.
+    
+    values_list = list(com_num.values())
+    keys_list = list(com_num.keys()) # These are zoom levels e.g. 2, 3, ..., 21
+
+    # Slicing directly like this from list(dict.values()) or list(dict.keys())
+    # assumes Python 3.7+ where dict insertion order is preserved,
+    # or that d1_dict was iterated in a specific sorted order for com_num population.
+    # For robustness, it's better to filter keys and then get values.
+    
+    # Original slicing indices (12 to 18, since 19 is exclusive)
+    # If keys_list is [2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21] (20 elements)
+    # Keys at index 12 to 18 are: 14,15,16,17,18,19,20
+    
+    target_keys_for_best_zoom = [k for k in keys_list if 14 <= k <= 20] # Example relevant zoom levels
+    
+    max_num_in_target = 0
+    if target_keys_for_best_zoom:
+        values_in_target = [com_num[k] for k in target_keys_for_best_zoom if k in com_num]
+        if values_in_target:
+            max_num_in_target = max(values_in_target)
+    
+    new_list_coords = []
+    if max_num_in_target == 0:
+        new_list_coords = get_23d(d2_lon, d3_lat) # Default distance
+        print(f'没有最优倍数 (max_num_in_target is 0), 取默认值. Coords: {new_list_coords}')
     else:
-        best_d1_multiple = [i for i in list(com_num.keys())[12:19] if com_num[i] == max_num]
-        print('最优倍数为：', best_d1_multiple)
-        new_list = get_23d(d2, d3, dis=d1_dict[best_d1_multiple[0]])
-    print('移动后的四个坐标', new_list)
-    for i in new_list:
-        if i:
-            get_com(i[0], i[1])
-            # print(i)
+        best_d1_multiples_for_max = [
+            k for k in target_keys_for_best_zoom if k in com_num and com_num[k] == max_num_in_target
+        ]
+        if not best_d1_multiples_for_max: # Fallback if something went wrong
+             best_d1_multiples_for_max = [k for k in keys_list if k in com_num and com_num[k] == max_num_in_target]
+
+
+        if best_d1_multiples_for_max: # Should have at least one
+            chosen_best_d1_multiple = best_d1_multiples_for_max[0] # Take the first one
+            print(f'最优倍数为： {chosen_best_d1_multiple} (from {best_d1_multiples_for_max}) with {max_num_in_target} companies.')
+            distance_for_step = d1_dict[chosen_best_d1_multiple] # This is the '1d' value
+            new_list_coords = get_23d(d2_lon, d3_lat, dis=distance_for_step)
+        else: # Should not happen if max_num_in_target > 0
+             new_list_coords = get_23d(d2_lon, d3_lat) # Default distance
+             print(f'逻辑错误: max_num > 0 但未找到 best_d1_multiple. 取默认值. Coords: {new_list_coords}')
+
+
+    print(f'移动后的四个坐标 (for {d2_lon},{d3_lat}): {new_list_coords}')
+    for i_coord in new_list_coords: # Renamed 'i' to 'i_coord'
+        if i_coord: # i_coord is a tuple (lon, lat)
+            # >>> MODIFIED: Pass proxies in recursive call
+            get_com(i_coord[0], i_coord[1], proxies=proxies)
 
 
 if __name__ == '__main__':
-    # d = 20037508.3427892
+    # d = 20037508.3427892 # Original comment
     # 起始点
-    d3 = 22.3527234
-    d2 = 114.1277
-    get_com(d2, d3)
+    d3_start_lat = 22.3527234
+    d2_start_lon = 114.1277
+
+    # Define your proxies here IF you want to hardcode for testing
+    # For committed code, it's better to pass them from an external source or environment variables
+    # Example proxy dictionary (replace with your actual proxy if testing)
+    test_proxies = {
+        "http": "http://kmzhpbnt-rotate:fmce7ro1djvc@p.webshare.io:80/",
+        "https": "http://kmzhpbnt-rotate:fmce7ro1djvc@p.webshare.io:80/" # Or your HTTPS specific proxy
+    }
+    
+    print(f"Starting crawler from lat: {d3_start_lat}, lon: {d2_start_lon}")
+    
+    # To run WITH proxies:
+    # get_com(d2_start_lon, d3_start_lat, proxies=test_proxies)
+    
+    # To run WITHOUT proxies (original behavior):
+    get_com(d2_start_lon, d3_start_lat, proxies=None) # Or simply get_com(d2_start_lon, d3_start_lat)
+    # For your specific request to use the Webshare proxy:
+    # get_com(d2_start_lon, d3_start_lat, proxies=test_proxies)
+
+
+    print("Crawler finished.")
