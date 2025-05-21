@@ -12,6 +12,9 @@ ua = UserAgent()
 
 GOOGLE_URL = 'https://www.google.com'
 
+# Define standard environment variable names the library will check
+ENV_PROXY_HTTP = "GOOGLEMAPSPY_PROXY_HTTP_URL"
+ENV_PROXY_HTTPS = "GOOGLEMAPSPY_PROXY_HTTPS_URL"
 
 class GoogleMaps:
 
@@ -33,13 +36,34 @@ class GoogleMaps:
         self.places = []
         self.reviews = []
 
+        if proxies is not None:
+            self.proxies = proxies
+            self.logger.info("Using explicitly passed proxies.")
+        else:
+            # Try to load from environment variables
+            http_proxy_url = os.environ.get(ENV_PROXY_HTTP)
+            https_proxy_url = os.environ.get(ENV_PROXY_HTTPS)
+
+            loaded_proxies = {}
+            if http_proxy_url:
+                loaded_proxies['http'] = http_proxy_url
+            if https_proxy_url:
+                loaded_proxies['https'] = https_proxy_url
+
+            if loaded_proxies:
+                self.proxies = loaded_proxies
+                self.logger.info(f"Loaded proxies from environment variables: {', '.join(loaded_proxies.keys())}")
+            else:
+                self.proxies = None # No proxies passed and none in environment
+                self.logger.info("No proxies provided or found in environment variables.")
+
     def get_images(self, ids=[]):
         if ids:
             id1, id2 = ids
         else:
             raise
         self.__set_latitude()
-        r = self.session.request("GET", self._get_images_url(id1_=id1, id2_=id2), headers=self.headers)
+        r = self.session.request("GET", self._get_images_url(id1_=id1, id2_=id2), headers=self.headers, proxies=self.proxies)
         r.raise_for_status()
         list_data = json.loads(r.text[5:])
         images = []
@@ -74,7 +98,7 @@ class GoogleMaps:
         self.__set_latitude()
         tr = True
         while tr:
-            r = self.session.request("GET", self._url_get_review(id1, id2, last_id), headers=self.headers)
+            r = self.session.request("GET", self._url_get_review(id1, id2, last_id), headers=self.headers, proxies=self.proxies)
             r.raise_for_status()
             list_data = json.loads(r.text[5:])
 
@@ -117,7 +141,7 @@ class GoogleMaps:
     def get_place(self, keyword="", url="", offset=0, p=100) -> Place:
         self.__set_latitude(keyword)
         if keyword:
-            r = self.session.request("GET", **self._url_search(keyword, p, offset), headers=self.headers)
+            r = self.session.request("GET", url=search_params["url"], headers=self.headers, proxies=self.proxies)
             r.raise_for_status()
 
             list_data = json.loads(r.text[5:])
@@ -130,7 +154,7 @@ class GoogleMaps:
             else:
                 return None
         elif url:
-            r = self.session.request("GET", self._url_get_place(url), headers=self.headers)
+            r = self.session.request("GET", self._url_get_place(url), headers=self.headers, proxies=self.proxies)
             r.raise_for_status()
 
             list_data = json.loads(r.text[5:])
@@ -196,7 +220,7 @@ class GoogleMaps:
                 self.logger.info(f"request:{'GET'}, Per Page:{per_page}, Offset:{offset}, Keyword:{keyword}")
                 r = self.session.request("GET",
                                          **self._url_search(keyword, per_page, offset, add_oq=add_oq),
-                                         headers=self.headers, timeout=60)
+                                         headers=self.headers, proxies=self.proxies, timeout=60)
                 self.logger.info(f"request: {r}")
             except (requests.exceptions.ConnectionError, requests.exceptions.ReadTimeout) as e:
                 self.logger.error(e)
